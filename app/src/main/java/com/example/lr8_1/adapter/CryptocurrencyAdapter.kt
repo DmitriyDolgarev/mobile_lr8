@@ -10,6 +10,7 @@ import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.findViewTreeLifecycleOwner
 import androidx.recyclerview.widget.RecyclerView
 import com.bumptech.glide.Glide
 import com.bumptech.glide.request.target.CustomTarget
@@ -20,12 +21,16 @@ import com.example.lr8_1.model.CryptocurrencyModel
 import com.google.gson.Gson
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.IOException
 import java.net.URL
+import java.net.URLConnection
+import androidx.lifecycle.lifecycleScope
 
 class CryptocurrencyAdapter: RecyclerView.Adapter<CryptocurrencyAdapter.CryptocurrencyViewHolder>() {
 
@@ -92,10 +97,18 @@ class CryptocurrencyAdapter: RecyclerView.Adapter<CryptocurrencyAdapter.Cryptocu
 
     private fun loadValue(position: Int, holder: CryptocurrencyViewHolder)
     {
+
         CoroutineScope(Dispatchers.Main).launch {
-            val result = withContext(Dispatchers.IO) {
+            var isSuccessed: Boolean
+            var result: String
+            withContext(Dispatchers.IO) {
                 try {
-                    val client = OkHttpClient()
+                    val client = OkHttpClient.Builder()
+                        .connectTimeout(5, java.util.concurrent.TimeUnit.SECONDS) // Время ожидания подключения
+                        .readTimeout(2, java.util.concurrent.TimeUnit.SECONDS)    // Время ожидания чтения данных
+                        .writeTimeout(2, java.util.concurrent.TimeUnit.SECONDS)   // Время ожидания записи данных
+                        .build()
+
                     val request = Request.Builder()
                         .url(cryptocurrencyList[position].valueUrl)
                         .build()
@@ -103,25 +116,42 @@ class CryptocurrencyAdapter: RecyclerView.Adapter<CryptocurrencyAdapter.Cryptocu
                     val response = client.newCall(request).execute()
 
                     if (response.isSuccessful) {
-                        response.body?.string() ?: "Ошибка: пустой ответ"  // Получаем тело ответа как строку или сообщение об ошибке
+                        result = response.body?.string() ?: "Ошибка"  // Получаем тело ответа как строку или сообщение об ошибке
+                        isSuccessed = true
                     } else {
-                        "Ошибка: ${response.code}" // Сообщение об ошибке, если запрос не успешен
+                        result = "Ошибка"
+                        isSuccessed = false
                     }
-                } catch (e: IOException) {
-                    "Ошибка: ${e.message}" // Обрабатываем исключения, например, отсутствие сети
+                } catch (e: Exception) {
+                    result = "Ошибка" // Обрабатываем исключения, например, отсутствие сети
+                    isSuccessed = false
                 }
             }
 
-            var gson = Gson()
+            getValue(result, isSuccessed, holder)
+        }
+    }
 
-            val apiResponse: ApiResponse = gson.fromJson(result, ApiResponse::class.java)
+    private fun getValue(result: String, isSuccessed: Boolean, holder: CryptocurrencyViewHolder)
+    {
 
-            val tickerInfo = apiResponse.result.list[0]
+        val lifecycleOwner = holder.itemView.findViewTreeLifecycleOwner()
 
-            // Получаем значение bid1Price
-            val bid1Price = tickerInfo.bid1Price
+        if (lifecycleOwner != null) {
+            lifecycleOwner.lifecycleScope.launch {
+                var value: String = result
 
-            holder.itemView.findViewById<TextView>(R.id.value).text = bid1Price
+                if (isSuccessed) {
+                    val gson = Gson()
+                    val apiResponse: ApiResponse = gson.fromJson(result, ApiResponse::class.java)
+
+                    val tickerInfo = apiResponse.result.list[0]
+                    value = tickerInfo.bid1Price
+                }
+                holder.itemView.findViewById<TextView>(R.id.value).text = value
+            }
+        }else {
+            holder.itemView.findViewById<TextView>(R.id.value).text = "Ошибка"
         }
     }
 
@@ -130,19 +160,57 @@ class CryptocurrencyAdapter: RecyclerView.Adapter<CryptocurrencyAdapter.Cryptocu
         var url = cryptocurrencyList[position].imageUrl
 
         Thread { // Создаем новый поток
+            var isSuccessed: Boolean
             var bitmap: Bitmap? = null
             try {
                 val url = URL(url)
-                bitmap = BitmapFactory.decodeStream(url.openConnection().getInputStream())
+
+                val connection: URLConnection = url.openConnection()
+                connection.connectTimeout = 5000
+                bitmap = BitmapFactory.decodeStream(connection.getInputStream())
+
+                //bitmap = BitmapFactory.decodeStream(url.openConnection().getInputStream())
+                isSuccessed = true
             } catch (e: Exception) {
-                // Обработка ошибки загрузки изображения
-                e.printStackTrace()
+                /* Обработка ошибки загрузки изображения
+                (holder.itemView.context as? AppCompatActivity)?.runOnUiThread {
+                    holder.itemView.findViewById<ImageView>(R.id.cryptocurrencyImage).setImageResource(R.drawable.ic_launcher_background)
+                }
+                 */
+                isSuccessed = false
             }
 
-            // Обновляем UI в основном потоке
-            (holder.itemView.context as? AppCompatActivity)?.runOnUiThread {
-                holder.itemView.findViewById<ImageView>(R.id.cryptocurrencyImage).setImageBitmap(bitmap)
+            setImage(isSuccessed, bitmap, holder)
+
+            /*
+            if (isSuccessed)
+            {
+                // Обновляем UI в основном потоке
+                (holder.itemView.context as? AppCompatActivity)?.runOnUiThread {
+                    holder.itemView.findViewById<ImageView>(R.id.cryptocurrencyImage).setImageBitmap(bitmap)
+                }
             }
+            */
+
         }.start() // Запускаем поток
+    }
+
+    private fun setImage(isSuccessed: Boolean, bitmap: Bitmap?, holder: CryptocurrencyViewHolder)
+    {
+        Thread{
+            if (isSuccessed)
+            {
+                // Обновляем UI в основном потоке
+                (holder.itemView.context as? AppCompatActivity)?.runOnUiThread {
+                    holder.itemView.findViewById<ImageView>(R.id.cryptocurrencyImage).setImageBitmap(bitmap)
+                }
+            }
+            else
+            {
+                (holder.itemView.context as? AppCompatActivity)?.runOnUiThread {
+                    holder.itemView.findViewById<ImageView>(R.id.cryptocurrencyImage).setImageResource(R.drawable.ic_launcher_background)
+                }
+            }
+        }.start()
     }
 }

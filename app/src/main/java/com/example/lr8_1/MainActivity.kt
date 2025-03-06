@@ -3,6 +3,7 @@ package com.example.lr8_1
 import android.graphics.Bitmap
 import android.graphics.drawable.Drawable
 import android.os.Bundle
+import android.widget.Button
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.activity.enableEdgeToEdge
@@ -38,7 +39,13 @@ class MainActivity : AppCompatActivity() {
         enableEdgeToEdge()
         setContentView(R.layout.activity_main)
 
+        var btn = findViewById<Button>(R.id.myButton)
+
         initial()
+
+        btn.setOnClickListener{
+            initial()
+        }
 
         //var url = "https://i.pinimg.com/736x/b6/fa/73/b6fa7319362df17936f5819d8eb6cf9d.jpg"
 
